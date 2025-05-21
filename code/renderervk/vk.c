@@ -476,7 +476,7 @@ static void vk_set_object_name( uint64_t obj, const char *objName, VkDebugReport
 }
 
 
-static void vk_create_swapchain( VkPhysicalDevice physical_device, VkDevice device, VkSurfaceKHR surface, VkSurfaceFormatKHR surface_format, VkSwapchainKHR *swapchain ) {
+static void vk_create_swapchain( VkPhysicalDevice physical_device, VkDevice device, VkSurfaceKHR surface, VkSurfaceFormatKHR surface_format, VkSwapchainKHR *swapchain, qboolean verbose ) {
 	VkImageViewCreateInfo view;
 	VkSurfaceCapabilitiesKHR surface_caps;
 	VkExtent2D image_extent;
@@ -518,18 +518,20 @@ static void vk_create_swapchain( VkPhysicalDevice physical_device, VkDevice devi
 	present_modes = (VkPresentModeKHR *) ri.Malloc( present_mode_count * sizeof( VkPresentModeKHR ) );
 	VK_CHECK(qvkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, surface, &present_mode_count, present_modes));
 
-	ri.Printf( PRINT_ALL, "...presentation modes:" );
-	for ( i = 0; i < present_mode_count; i++ ) {
-		ri.Printf( PRINT_ALL, " %s", pmode_to_str( present_modes[i] ) );
-		if ( present_modes[i] == VK_PRESENT_MODE_MAILBOX_KHR )
-			mailbox_supported = qtrue;
-		else if ( present_modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR )
-			immediate_supported = qtrue;
-		else if ( present_modes[i] ==  VK_PRESENT_MODE_FIFO_RELAXED_KHR )
-			fifo_relaxed_supported = qtrue;
+	if ( verbose ) {
+		ri.Printf( PRINT_ALL, "...presentation modes:" );
+		for ( i = 0; i < present_mode_count; i++ ) {
+			ri.Printf( PRINT_ALL, " %s", pmode_to_str( present_modes[i] ) );
+			if ( present_modes[i] == VK_PRESENT_MODE_MAILBOX_KHR )
+				mailbox_supported = qtrue;
+			else if ( present_modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR )
+				immediate_supported = qtrue;
+			else if ( present_modes[i] == VK_PRESENT_MODE_FIFO_RELAXED_KHR )
+				fifo_relaxed_supported = qtrue;
 
+		}
+		ri.Printf( PRINT_ALL, "\n" );
 	}
-	ri.Printf( PRINT_ALL, "\n" );
 
 	ri.Free( present_modes );
 
@@ -567,7 +569,9 @@ static void vk_create_swapchain( VkPhysicalDevice physical_device, VkDevice devi
 		image_count = MIN( MIN( image_count, surface_caps.maxImageCount ), MAX_SWAPCHAIN_IMAGES );
 	}
 
-	ri.Printf( PRINT_ALL, "...selected presentation mode: %s, image count: %i\n", pmode_to_str( present_mode ), image_count );
+	if ( verbose ) {
+		ri.Printf( PRINT_ALL, "...selected presentation mode: %s, image count: %i\n", pmode_to_str( present_mode ), image_count );
+	}
 
 	// create swap chain
 	desc.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
@@ -600,7 +604,6 @@ static void vk_create_swapchain( VkPhysicalDevice physical_device, VkDevice devi
 	VK_CHECK( qvkGetSwapchainImagesKHR( vk.device, vk.swapchain, &vk.swapchain_image_count, vk.swapchain_images ) );
 
 	for ( i = 0; i < vk.swapchain_image_count; i++ ) {
-
 		view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
 		view.pNext = NULL;
 		view.flags = 0;
@@ -621,6 +624,15 @@ static void vk_create_swapchain( VkPhysicalDevice physical_device, VkDevice devi
 
 		SET_OBJECT_NAME( vk.swapchain_images[i], va( "swapchain image %i", i ), VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT );
 		SET_OBJECT_NAME( vk.swapchain_image_views[i], va( "swapchain image %i", i ), VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_VIEW_EXT );
+	}
+
+	for ( i = 0; i < vk.swapchain_image_count; i++ ) {
+		VkSemaphoreCreateInfo s;
+		s.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+		s.pNext = NULL;
+		s.flags = 0;
+		VK_CHECK( qvkCreateSemaphore( vk.device, &s, NULL, &vk.swapchain_rendering_finished[i] ) );
+		SET_OBJECT_NAME( vk.swapchain_rendering_finished[i], va( "swapchain_rendering_finished semaphore %i", i ), VK_DEBUG_REPORT_OBJECT_TYPE_SEMAPHORE_EXT );
 	}
 
 	if ( vk.initSwapchainLayout != VK_IMAGE_LAYOUT_UNDEFINED ) {
@@ -3720,7 +3732,6 @@ static void vk_create_sync_primitives( void ) {
 		// swapchain image acquired
 		VK_CHECK( qvkCreateSemaphore( vk.device, &desc, NULL, &vk.tess[i].image_acquired ) );
 
-		VK_CHECK( qvkCreateSemaphore( vk.device, &desc, NULL, &vk.tess[i].rendering_finished ) );
 #ifdef USE_UPLOAD_QUEUE
 		// second semaphore to synchronize additional tasks (e.g. image upload)
 		VK_CHECK( qvkCreateSemaphore( vk.device, &desc, NULL, &vk.tess[i].rendering_finished2 ) );
@@ -3734,7 +3745,6 @@ static void vk_create_sync_primitives( void ) {
 		vk.tess[i].waitForFence = qfalse;
 
 		SET_OBJECT_NAME( vk.tess[i].image_acquired, va( "image_acquired semaphore %i", i ), VK_DEBUG_REPORT_OBJECT_TYPE_SEMAPHORE_EXT );
-		SET_OBJECT_NAME( vk.tess[i].rendering_finished, va( "rendering_finished semaphore %i", i ), VK_DEBUG_REPORT_OBJECT_TYPE_SEMAPHORE_EXT );
 #ifdef USE_UPLOAD_QUEUE
 		SET_OBJECT_NAME( vk.tess[i].rendering_finished2, va( "rendering_finished2 semaphore %i", i ), VK_DEBUG_REPORT_OBJECT_TYPE_SEMAPHORE_EXT );
 #endif
@@ -3765,7 +3775,6 @@ static void vk_destroy_sync_primitives( void  ) {
 
 	for ( i = 0; i < NUM_COMMAND_BUFFERS; i++ ) {
 		qvkDestroySemaphore( vk.device, vk.tess[i].image_acquired, NULL );
-		qvkDestroySemaphore( vk.device, vk.tess[i].rendering_finished, NULL );
 #ifdef USE_UPLOAD_QUEUE
 		qvkDestroySemaphore( vk.device, vk.tess[i].rendering_finished2, NULL );
 #endif
@@ -3831,6 +3840,10 @@ static void vk_destroy_swapchain( void ) {
 			qvkDestroyImageView( vk.device, vk.swapchain_image_views[i], NULL );
 			vk.swapchain_image_views[i] = VK_NULL_HANDLE;
 		}
+		if ( vk.swapchain_rendering_finished[i] != VK_NULL_HANDLE ) {
+			qvkDestroySemaphore( vk.device, vk.swapchain_rendering_finished[i], NULL );
+			vk.swapchain_rendering_finished[i] = VK_NULL_HANDLE;
+		}
 	}
 
 	qvkDestroySwapchainKHR( vk.device, vk.swapchain, NULL );
@@ -3866,7 +3879,7 @@ static void vk_restart_swapchain( const char *funcname )
 	setup_surface_formats( vk.physical_device );
 
 	vk_create_sync_primitives();
-	vk_create_swapchain( vk.physical_device, vk.device, vk_surface, vk.present_format, &vk.swapchain );
+	vk_create_swapchain( vk.physical_device, vk.device, vk_surface, vk.present_format, &vk.swapchain, qfalse );
 	vk_create_attachments();
 	vk_create_render_passes();
 	vk_create_framebuffers();
@@ -4255,7 +4268,7 @@ void vk_initialize( void )
 	// swapchain
 	vk.initSwapchainLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 	//vk.initSwapchainLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-	vk_create_swapchain( vk.physical_device, vk.device, vk_surface, vk.present_format, &vk.swapchain );
+	vk_create_swapchain( vk.physical_device, vk.device, vk_surface, vk.present_format, &vk.swapchain, qtrue );
 
 	// color/depth attachments
 	vk_create_attachments();
@@ -7445,7 +7458,7 @@ void vk_end_frame( void )
 			submit_info.waitSemaphoreCount = 2;
 			submit_info.pWaitSemaphores = &waits[0];
 			submit_info.pWaitDstStageMask = &wait_dst_stage_mask[0];
-			signals[0] = vk.cmd->rendering_finished;
+			signals[0] = vk.swapchain_rendering_finished[ vk.cmd->swapchain_image_index ];
 			signals[1] = vk.cmd->rendering_finished2;
 			submit_info.signalSemaphoreCount = 2;
 			submit_info.pSignalSemaphores = &signals[0];
@@ -7458,7 +7471,7 @@ void vk_end_frame( void )
 			submit_info.waitSemaphoreCount = 2;
 			submit_info.pWaitSemaphores = &waits[0];
 			submit_info.pWaitDstStageMask = &wait_dst_stage_mask[0];
-			signals[0] = vk.cmd->rendering_finished;
+			signals[0] = vk.swapchain_rendering_finished[ vk.cmd->swapchain_image_index ];
 			signals[1] = vk.cmd->rendering_finished2;
 			submit_info.signalSemaphoreCount = 2;
 			submit_info.pSignalSemaphores = &signals[0];
@@ -7469,14 +7482,14 @@ void vk_end_frame( void )
 			submit_info.pWaitSemaphores = &vk.cmd->image_acquired;
 			submit_info.pWaitDstStageMask = &wait_dst_stage_mask[0];
 			submit_info.signalSemaphoreCount = 1;
-			submit_info.pSignalSemaphores = &vk.cmd->rendering_finished;
+			submit_info.pSignalSemaphores = &vk.swapchain_rendering_finished[ vk.cmd->swapchain_image_index ];
 		}
 #else
 		submit_info.waitSemaphoreCount = 1;
 		submit_info.pWaitSemaphores = &vk.cmd->image_acquired;
 		submit_info.pWaitDstStageMask = &wait_dst_stage_mask;
 		submit_info.signalSemaphoreCount = 1;
-		submit_info.pSignalSemaphores = &vk.cmd->rendering_finished;
+		submit_info.pSignalSemaphores = &vk.swapchain_rendering_finished[ vk.cmd->swapchain_image_index ];
 #endif
 	} else {
 		submit_info.waitSemaphoreCount = 0;
@@ -7513,7 +7526,7 @@ void vk_present_frame( void )
 	present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 	present_info.pNext = NULL;
 	present_info.waitSemaphoreCount = 1;
-	present_info.pWaitSemaphores = &vk.cmd->rendering_finished;
+	present_info.pWaitSemaphores = &vk.swapchain_rendering_finished[ vk.cmd->swapchain_image_index ];
 	present_info.swapchainCount = 1;
 	present_info.pSwapchains = &vk.swapchain;
 	present_info.pImageIndices = &vk.cmd->swapchain_image_index;
